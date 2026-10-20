@@ -1,0 +1,9 @@
+.pio/
+.vscode/
+include/config.h
+tools/preview/build/
+tools/preview/preview
+test/host/test_core
+test/host/ics_dump
+__pycache__/
+*.pyc
