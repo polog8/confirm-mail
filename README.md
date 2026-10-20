@@ -54,8 +54,12 @@ Ce que la station fait seule, pour que vous ayez moins à vérifier :
 ### 2. Configuration
 
 ```bash
-cp include/config.example.h include/config.h
+cp include/config.example.h include/config.h      # macOS / Linux
+Copy-Item include\config.example.h include\config.h   # Windows (PowerShell)
 ```
+
+Ce fichier n'est ni dans git ni dans le ZIP téléchargé depuis GitHub. Si vous mettez à jour le
+projet en téléchargeant un nouveau ZIP, recopiez votre `include/config.h` dans le nouveau dossier.
 
 Ouvrez `include/config.h` (ignoré par git) et renseignez au minimum :
 
