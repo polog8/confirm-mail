@@ -9,7 +9,7 @@
 
 namespace cfg {
 
-constexpr const char* kVersion = "v1.0.0";
+constexpr const char* kVersion = "v1.0.1";
 
 constexpr int kNumCalendars = static_cast<int>(sizeof(kCalendars) / sizeof(kCalendars[0]));
 constexpr int kNumWifi = static_cast<int>(sizeof(kWifi) / sizeof(kWifi[0]));

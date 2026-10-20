@@ -38,7 +38,7 @@ void SystemApp::render(draw::Canvas& c, const Frame& f) {
   const AppSnapshot& s = *f.s;
   char buf[96], t[8];
   int y = 44;
-  const int step = 18;
+  const int step = 17;
 
   if (s.sys.wifi) snprintf(buf, sizeof(buf), "%s \xC2\xB7 \xE2\x88\x92%d dBm", s.sys.ssid, -s.sys.rssi);
   else snprintf(buf, sizeof(buf), "Déconnecté");
@@ -96,6 +96,11 @@ void SystemApp::render(draw::Canvas& c, const Frame& f) {
   else snprintf(buf, sizeof(buf), "%s \xC2\xB7 %u h %02u", version_, up / 3600, (up / 60) % 60);
   row(c, y, "Version", buf);
   y += step;
+
+  if (s.sys.resetReason[0]) {
+    row(c, y, "Démarrage", s.sys.resetReason, s.sys.abnormalReset ? theme::kWarn : theme::kText);
+    y += step;
+  }
 
   // Brightness slider
   draw::text(c, Font::Small, "Luminosité", 14, y + 4, theme::kText3);

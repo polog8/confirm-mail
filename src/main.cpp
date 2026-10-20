@@ -5,6 +5,8 @@
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <sys/time.h>
 
 #include <new>
@@ -13,8 +15,9 @@
 #include "services/net.h"
 #include "services/settings.h"
 #include "services/spotify.h"
-#include "services/store.h"
 #include "services/feeds.h"
+#include "services/store.h"
+#include "services/tls.h"
 #include "ui/chrome.h"
 #include "ui/fonts.h"
 #include "ui/format.h"
@@ -221,6 +224,27 @@ Frame makeFrame() {
   return f;
 }
 
+// Why the previous run ended, shown on the System page.
+const char* resetReasonText(esp_reset_reason_t r, bool* abnormal) {
+  *abnormal = true;
+  switch (r) {
+    case ESP_RST_PANIC: return "plantage";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "chute de tension";
+    default: break;
+  }
+  *abnormal = false;
+  switch (r) {
+    case ESP_RST_POWERON: return "mise sous tension";
+    case ESP_RST_SW: return "redémarrage";
+    case ESP_RST_EXT: return "bouton reset";
+    case ESP_RST_DEEPSLEEP: return "réveil";
+    default: return "autre";
+  }
+}
+
 void restoreClockFromRtc() {
   if (!M5.Rtc.isEnabled()) return;
   m5::rtc_datetime_t dt;
@@ -365,6 +389,10 @@ void handleInput(const Frame& f) {
 }  // namespace
 
 void setup() {
+  // TLS handshakes and HTTPClient's busy waits can keep core 0 busy for a few
+  // seconds; keep the watchdog for real hangs but don't let it fire on those.
+  esp_task_wdt_init(30, true);
+
   auto config = M5.config();
   config.serial_baudrate = 115200;
   config.internal_mic = false;
@@ -390,7 +418,11 @@ void setup() {
   {
     Store::Guard g(g_store);
     g_store.data().play.status = cfg::spotifyConfigured() ? SpotifyStatus::Connecting : SpotifyStatus::Disabled;
+    SystemState& sys = g_store.data().sys;
+    const esp_reset_reason_t reason = esp_reset_reason();
+    strlcpy(sys.resetReason, resetReasonText(reason, &sys.abnormalReset), sizeof(sys.resetReason));
     g_store.touch();
+    log_i("Reset reason: %d (%s)", static_cast<int>(reason), sys.resetReason);
   }
 
   g_shell.add(&g_home);
@@ -404,6 +436,7 @@ void setup() {
   g_system.setBrightnessPercent(g_brightnessPct);
   g_music.setArt(nullptr, 0);
 
+  tls::begin();  // before any task opens a TLS connection
   net::startTask();
   spotify::startTask();
   feeds::startTask();

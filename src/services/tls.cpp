@@ -1,15 +1,14 @@
 #include "tls.h"
 
 extern const uint8_t kCertBundle[] asm("_binary_data_cert_x509_crt_bundle_bin_start");
+// From the WiFiClientSecure library (esp_crt_bundle.c).
+extern "C" void arduino_esp_crt_bundle_set(const uint8_t* x509_bundle);
 
 namespace tls {
 
-void setup(WiFiClientSecure& client) {
-  client.setCACertBundle(kCertBundle);
-  client.setHandshakeTimeout(15);
-}
+void begin() { arduino_esp_crt_bundle_set(kCertBundle); }
 
-int get(WiFiClientSecure& client, const String& url, String& body, uint16_t timeoutMs) {
+int get(Client& client, const String& url, String& body, uint16_t timeoutMs) {
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(timeoutMs);

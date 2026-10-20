@@ -71,9 +71,9 @@ class Worker {
   void setStatus(SpotifyStatus s);
   uint32_t pollInterval();
 
-  WiFiClientSecure apiTls_;
-  WiFiClientSecure authTls_;
-  WiFiClientSecure imgTls_;
+  tls::Client apiTls_;
+  tls::Client authTls_;
+  tls::Client imgTls_;
   HTTPClient api_;
   Preferences prefs_;
   String access_;
@@ -468,11 +468,8 @@ void Worker::downloadArt(const String& url) {
 }
 
 void Worker::run() {
-  tls::setup(apiTls_);
-  tls::setup(authTls_);
-  tls::setup(imgTls_);
   prefs_.begin("spotify", false);
-  refresh_ = prefs_.getString("refresh", "");
+  refresh_ = prefs_.isKey("refresh") ? prefs_.getString("refresh", "") : String();
   refreshFromNvs_ = refresh_.length() > 0;
   if (!refresh_.length()) refresh_ = cfg::kSpotifyRefreshToken;
   setStatus(refresh_.length() ? SpotifyStatus::Connecting : SpotifyStatus::NeedsAuth);
@@ -540,7 +537,7 @@ void taskMain(void*) {
 
 void startTask() {
   if (!cfg::spotifyConfigured()) return;
-  xTaskCreatePinnedToCore(taskMain, "spotify", 16384, nullptr, 3, nullptr, 0);
+  xTaskCreatePinnedToCore(taskMain, "spotify", 16384, nullptr, 1, nullptr, 0);
 }
 
 void authorizeUrl(char* out, size_t n, const char* state) {

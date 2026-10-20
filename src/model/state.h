@@ -109,6 +109,8 @@ struct SystemState {
   uint32_t freePsram = 0;
   uint32_t uptimeS = 0;
   bool portalUp = false;
+  char resetReason[24] = {0};  // cause of the last restart
+  bool abnormalReset = false;
 };
 
 struct AppSnapshot {

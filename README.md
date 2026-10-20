@@ -188,6 +188,21 @@ La CI GitHub (`.github/workflows/firmware.yml`) lance les tests et compile le fi
 
 Pour régénérer les polices : `tools/gen_fonts.sh` (nécessite Pillow et fontTools).
 
+## Dépannage
+
+- **Journal série** : `pio device monitor` (115200 bauds). Les plantages y sont décodés
+  automatiquement (filtre `esp32_exception_decoder`).
+- **Écran Système › Démarrage** : cause du dernier redémarrage. « watchdog », « plantage » ou
+  « chute de tension » s'affichent en orange.
+- **Redémarrage en boucle avec `task_wdt: … IDLE0`** (versions ≤ 1.0.0) : la synchronisation
+  météo/agenda monopolisait le cœur 0 pendant les connexions HTTPS, et le watchdog redémarrait
+  l'ESP32. C'est corrigé en 1.0.1 : tâches réseau à basse priorité, watchdog à 30 s, certificats
+  chargés une seule fois. Mettez à jour et reflashez.
+- **Agenda « iCloud : identifiants refusés »** : utilisez l'adresse e-mail principale du compte
+  Apple et un *mot de passe pour app*, pas votre mot de passe Apple.
+- **Musique « Autoriser Spotify »** : ouvrez la page web de la station (adresse dans l'écran
+  Système) et suivez les étapes.
+
 ## Limites connues
 
 - **Spotify.** Pas de navigation dans la bibliothèque, seulement le contrôle de la lecture en cours.

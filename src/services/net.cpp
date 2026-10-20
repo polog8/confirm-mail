@@ -248,7 +248,7 @@ void taskMain(void*) {
 void startTask() {
   snprintf(g_state, sizeof(g_state), "%08lx%08lx", static_cast<unsigned long>(esp_random()),
            static_cast<unsigned long>(esp_random()));
-  xTaskCreatePinnedToCore(taskMain, "net", 8192, nullptr, 2, nullptr, 0);
+  xTaskCreatePinnedToCore(taskMain, "net", 8192, nullptr, 1, nullptr, 0);
 }
 
 }  // namespace net

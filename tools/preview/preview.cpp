@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
   snap.sys.freeHeap = 148 * 1024;
   snap.sys.freePsram = 6900 * 1024;
   snap.sys.uptimeS = 3 * 3600 + 12 * 60;
+  snprintf(snap.sys.resetReason, sizeof(snap.sys.resetReason), "mise sous tension");
 
   PlaybackState& p = snap.play;
   p.status = SpotifyStatus::Ok;

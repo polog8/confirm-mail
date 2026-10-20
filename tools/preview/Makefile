@@ -14,7 +14,7 @@ APP_SRC := $(wildcard $(ROOT)/src/ui/*.cpp) $(wildcard $(ROOT)/src/ui/apps/*.cpp
            $(ROOT)/src/core/civil.cpp $(ROOT)/src/core/tz.cpp preview.cpp
 APP_OBJ := $(patsubst $(ROOT)/%,build/app/%,$(filter $(ROOT)/%,$(APP_SRC:.cpp=.o))) build/app/preview.o
 
-CXXFLAGS := -std=c++17 -O2 -I$(M5GFX) -I$(ROOT)/src $(SDL_CFLAGS)
+CXXFLAGS := -std=c++17 -O2 -MMD -MP -I$(M5GFX) -I$(ROOT)/src $(SDL_CFLAGS)
 
 preview: $(APP_OBJ) build/libm5gfx.a
 	$(CXX) -o $@ $(APP_OBJ) build/libm5gfx.a $(SDL_LIBS) -lpthread
@@ -44,5 +44,7 @@ shots: preview
 
 clean:
 	rm -rf build preview
+
+-include $(APP_OBJ:.o=.d)
 
 .PHONY: shots clean

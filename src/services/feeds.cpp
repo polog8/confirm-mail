@@ -199,9 +199,8 @@ bool fetchIcs(Slot& slot, int64_t ws, int64_t we, char* err, size_t errLen) {
   url.trim();
   if (url.startsWith("webcal://")) url = "https://" + url.substring(9);
 
-  WiFiClientSecure secure;
+  tls::Client secure;
   WiFiClient plain;
-  tls::setup(secure);
   const bool https = url.startsWith("https://");
   HTTPClient http;
   http.useHTTP10(true);  // no chunked encoding: the body can be streamed as is
@@ -334,8 +333,7 @@ bool refreshWeather() {
            "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"
            "&timezone=auto&forecast_days=2&timeformat=unixtime",
            cfg::kLatitude, cfg::kLongitude);
-  WiFiClientSecure client;
-  tls::setup(client);
+  tls::Client client;
   String body;
   const int code = tls::get(client, url, body);
   if (code != 200) {
@@ -379,10 +377,16 @@ void taskMain(void*) {
   uint32_t nextWeather = 0, nextCalendar = 0;
   int64_t lastDay = -1;
   const bool calendars = cfg::calendarsConfigured();
+  bool online = false;
   for (;;) {
     if (WiFi.status() != WL_CONNECTED || time(nullptr) < 1700000000) {
+      online = false;
       delay(1000);
       continue;
+    }
+    if (!online) {
+      online = true;
+      delay(3000);  // spread the TLS handshakes that follow a (re)connection
     }
     const bool force = g_store.refreshRequested;
     if (force) g_store.refreshRequested = false;
@@ -422,7 +426,10 @@ void startTask() {
     strlcpy(g_store.data().weather.place, cfg::kPlaceName, sizeof(g_store.data().weather.place));
   }
   if (!cfg::calendarsConfigured() && !cfg::kWeatherEnabled) return;
-  xTaskCreatePinnedToCore(taskMain, "feeds", 16384, nullptr, 1, nullptr, 0);
+  // Priority 0, like core 0's idle task: FreeRTOS time-slices between them, so
+  // long downloads, parsing and TLS handshakes can never starve the idle task
+  // (whose watchdog would otherwise reboot the station).
+  xTaskCreatePinnedToCore(taskMain, "feeds", 16384, nullptr, tskIDLE_PRIORITY, nullptr, 0);
 }
 
 }  // namespace feeds

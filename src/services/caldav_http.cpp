@@ -34,9 +34,8 @@ class SinkStream : public Stream {
 
 int HttpsCalDavTransport::request(const char* method, const std::string& url, const char* depth,
                                   const std::string& body, Sink sink, void* ctx, std::string* location) {
-  WiFiClientSecure secure;
+  tls::Client secure;
   WiFiClient plain;
-  tls::setup(secure);
   const bool https = url.rfind("https://", 0) == 0;
   HTTPClient http;
   http.setReuse(false);  // "Connection: close": the server ends the body for us
