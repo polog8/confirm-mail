@@ -40,19 +40,33 @@ constexpr const char* kSpotifyRefreshToken = "";
 // (morceau de son nom, ex. "MacBook" ; vide = le premier disponible).
 constexpr const char* kSpotifyPreferredDevice = "";
 
-// ------------------------------------------------------------ Calendriers --
-// Liens iCal (.ics / webcal://). Calendrier Apple : app Calendrier > clic
-// droit sur le calendrier > Partager > « Calendrier public » > copier le lien.
-// Google : Paramètres > calendrier > « Adresse secrète au format iCal ».
-// Laisser l'URL vide désactive l'entrée. 4 calendriers maximum.
+// ---------------------------------------------------- iCloud (CalDAV) -----
+// Recommandé pour le calendrier Apple : lecture directe de vos calendriers,
+// sans les rendre publics. Il faut un « mot de passe pour app » (pas votre
+// mot de passe Apple) : https://account.apple.com > Connexion et sécurité >
+// Mots de passe pour app > « + ». Révocable à tout moment.
+// Fonctionne aussi avec d'autres serveurs CalDAV (changez l'URL) :
+//   Fastmail  https://caldav.fastmail.com/
+//   Nextcloud https://mon-cloud.fr/remote.php/dav/
+constexpr const char* kCalDavUrl = "https://caldav.icloud.com/";
+constexpr const char* kCalDavUser = "";      // e-mail du compte Apple
+constexpr const char* kCalDavPassword = "";  // xxxx-xxxx-xxxx-xxxx
+// Calendriers à afficher, séparés par des virgules, ex. "Maison, Travail".
+// Vide = tous les calendriers d'événements du compte (les couleurs d'iCloud
+// sont reprises).
+constexpr const char* kCalDavCalendars = "";
+
+// ------------------------------------------------- Autres calendriers ------
+// Liens iCal (.ics / webcal://) : Google (« Adresse secrète au format iCal »),
+// Outlook (« Publier un calendrier »), calendrier iCloud public…
+// Laisser l'URL vide désactive l'entrée. 8 calendriers au total (CalDAV + iCal).
 struct CalendarSource {
   const char* name;
   const char* url;
   uint32_t color;  // 0xRRGGBB
 };
 constexpr CalendarSource kCalendars[] = {
-    {"Perso", "", 0x5B8DEF},
-    {"Travail", "", 0xF59E0B},
+    {"Google", "", 0xF59E0B},
 };
 constexpr int kCalendarRefreshMin = 10;
 constexpr int kMeetingAlertMin = 5;  // rappel N minutes avant (0 = jamais)

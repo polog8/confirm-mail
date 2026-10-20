@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <new>
 
+#include "../core/caldav.h"
 #include "../core/ics.h"
+#include "caldav_http.h"
 #include "settings.h"
 #include "store.h"
 #include "tls.h"
@@ -20,22 +22,180 @@ namespace {
 
 PosixTz g_tz;
 
-struct CalendarCache {
+// One displayed calendar: either an iCal link from config.h or a calendar
+// discovered on the CalDAV account.
+struct Slot {
+  bool caldav = false;
+  int icsIndex = -1;
+  char url[200] = {0};
+  char name[24] = {0};
+  uint32_t color = 0;
   CalendarEvent* events = nullptr;
   int count = 0;
   bool ok = false;
 };
 
-CalendarCache g_cache[kMaxCalendars];
-int g_active[kMaxCalendars];  // index into cfg::kCalendars
-int g_numActive = 0;
+Slot g_slots[kMaxCalendars];
+int g_numSlots = 0;
+int g_numIcs = 0;
+bool g_discovered = false;
+uint32_t g_nextDiscovery = 0;
+char g_discoveryError[64] = {0};
+
+const uint32_t kPalette[] = {0x5B8DEF, 0xF59E0B, 0x34D399, 0xF472B6, 0xA78BFA, 0x22D3EE, 0xF87171, 0xFACC15};
+
+const char* accountLabel() { return strstr(cfg::kCalDavUrl, "icloud") ? "iCloud" : "CalDAV"; }
 
 void setError(char* err, size_t n, const char* name, const char* what) { snprintf(err, n, "%s : %s", name, what); }
 
-// Streams one iCal feed through the parser. Returns false on failure.
-bool fetchCalendar(int slot, int64_t ws, int64_t we, char* err, size_t errLen) {
-  const cfg::CalendarSource& src = cfg::kCalendars[g_active[slot]];
-  String url = src.url;
+CalendarEvent* allocEvents() {
+  return static_cast<CalendarEvent*>(
+      heap_caps_malloc(sizeof(CalendarEvent) * kMaxEvents, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+}
+
+IcsParser* newParser(int64_t ws, int64_t we) {
+  void* mem = heap_caps_malloc(sizeof(IcsParser), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return mem ? new (mem) IcsParser(g_tz, ws, we) : nullptr;
+}
+
+void deleteParser(IcsParser* p) {
+  p->~IcsParser();
+  free(p);
+}
+
+void storeResults(Slot& slot, const IcsParser& parser) {
+  slot.count = 0;
+  for (int i = 0; i < parser.count() && slot.count < kMaxEvents; ++i) {
+    const IcsOccurrence& o = parser.at(i);
+    CalendarEvent& e = slot.events[slot.count++];
+    e.start = o.start;
+    e.end = o.end;
+    e.allDay = o.allDay;
+    e.uid = o.uid;
+    memcpy(e.title, o.title, sizeof(e.title));
+    memcpy(e.location, o.location, sizeof(e.location));
+    memcpy(e.url, o.url, sizeof(e.url));
+  }
+}
+
+// Pushes names and colors to the UI.
+void publishCalendars() {
+  Store::Guard g(g_store);
+  CalendarState& cal = g_store.data().cal;
+  cal.numCalendars = g_numSlots;
+  for (int s = 0; s < g_numSlots; ++s) {
+    strlcpy(cal.calendars[s].name, g_slots[s].name, sizeof(cal.calendars[s].name));
+    cal.calendars[s].color = g_slots[s].color;
+  }
+  g_store.touch();
+}
+
+// "Maison, Travail" -> does `name` appear in the list? Empty list = all.
+bool wanted(const char* name) {
+  const char* list = cfg::kCalDavCalendars;
+  if (!list || !*list) return true;
+  const size_t len = strlen(name);
+  const char* p = list;
+  while (*p) {
+    while (*p == ' ' || *p == ',') ++p;
+    const char* b = p;
+    while (*p && *p != ',') ++p;
+    const char* e = p;
+    while (e > b && e[-1] == ' ') --e;
+    if (static_cast<size_t>(e - b) == len && strncasecmp(b, name, len) == 0) return true;
+  }
+  return false;
+}
+
+// Lists the CalDAV account's calendars and maps them to slots, keeping the
+// cached events of calendars that were already known.
+bool discoverCalDav() {
+  HttpsCalDavTransport transport(cfg::kCalDavUser, cfg::kCalDavPassword);
+  CalDavClient client(transport);
+  static CalDavCalendar found[16];
+  const int n = client.discover(cfg::kCalDavUrl, found, 16);
+  if (n < 0) {
+    setError(g_discoveryError, sizeof(g_discoveryError), accountLabel(), client.error());
+    log_w("CalDAV discovery failed: %s (HTTP %d)", client.error(), client.lastStatus());
+    return false;
+  }
+  g_discoveryError[0] = '\0';
+
+  Slot old[kMaxCalendars];
+  const int oldCount = g_numSlots;
+  for (int s = g_numIcs; s < oldCount; ++s) old[s] = g_slots[s];
+  int next = g_numIcs;
+  int matched = 0;
+  for (int i = 0; i < n && next < kMaxCalendars; ++i) {
+    if (!wanted(found[i].name)) continue;
+    ++matched;
+    Slot slot;
+    slot.caldav = true;
+    strlcpy(slot.url, found[i].url, sizeof(slot.url));
+    strlcpy(slot.name, found[i].name, sizeof(slot.name));
+    slot.color = found[i].hasColor ? found[i].color : kPalette[next % 8];
+    // Reuse the event buffer (and cache) of the same calendar if we had it.
+    for (int s = g_numIcs; s < oldCount; ++s) {
+      if (old[s].events && strcmp(old[s].url, slot.url) == 0) {
+        slot.events = old[s].events;
+        slot.count = old[s].count;
+        slot.ok = old[s].ok;
+        old[s].events = nullptr;
+        break;
+      }
+    }
+    g_slots[next++] = slot;
+  }
+  // Recycle buffers of calendars that disappeared, allocate the missing ones.
+  for (int s = g_numIcs; s < oldCount; ++s) {
+    if (!old[s].events) continue;
+    bool reused = false;
+    for (int k = g_numIcs; k < next && !reused; ++k) {
+      if (!g_slots[k].events) {
+        g_slots[k].events = old[s].events;
+        reused = true;
+      }
+    }
+    if (!reused) free(old[s].events);
+  }
+  for (int k = g_numIcs; k < next; ++k) {
+    if (!g_slots[k].events) g_slots[k].events = allocEvents();
+  }
+  for (int k = next; k < oldCount; ++k) g_slots[k] = Slot();  // buffers handled above
+  g_numSlots = next;
+  if (matched == 0) {
+    setError(g_discoveryError, sizeof(g_discoveryError), accountLabel(),
+             n == 0 ? "aucun calendrier" : "calendriers choisis introuvables");
+  }
+  log_i("CalDAV: %d calendars found, %d shown", n, matched);
+  publishCalendars();
+  return true;
+}
+
+bool fetchCalDav(Slot& slot, int64_t ws, int64_t we, char* err, size_t errLen) {
+  IcsParser* parser = newParser(ws, we);
+  if (!parser) {
+    setError(err, errLen, slot.name, "mémoire");
+    return false;
+  }
+  HttpsCalDavTransport transport(cfg::kCalDavUser, cfg::kCalDavPassword);
+  CalDavClient client(transport);
+  const bool ok = client.fetchEvents(slot.url, ws, we, *parser);
+  parser->finish();
+  if (ok) {
+    storeResults(slot, *parser);
+    log_i("CalDAV %s: %d events (%d VEVENTs)", slot.name, slot.count, parser->eventsSeen());
+  } else {
+    setError(err, errLen, slot.name, client.error());
+    if (client.lastStatus() == 404 || client.lastStatus() == 410) g_nextDiscovery = millis();  // calendar moved
+  }
+  deleteParser(parser);
+  return ok;
+}
+
+// Streams one iCal feed through the parser.
+bool fetchIcs(Slot& slot, int64_t ws, int64_t we, char* err, size_t errLen) {
+  String url = cfg::kCalendars[slot.icsIndex].url;
   url.trim();
   if (url.startsWith("webcal://")) url = "https://" + url.substring(9);
 
@@ -51,7 +211,7 @@ bool fetchCalendar(int slot, int64_t ws, int64_t we, char* err, size_t errLen) {
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.setUserAgent("M5DeskStation/1.0");
   if (!(https ? http.begin(secure, url) : http.begin(plain, url))) {
-    setError(err, errLen, src.name, "URL invalide");
+    setError(err, errLen, slot.name, "URL invalide");
     return false;
   }
   const int code = http.GET();
@@ -59,19 +219,17 @@ bool fetchCalendar(int slot, int64_t ws, int64_t we, char* err, size_t errLen) {
     char what[32];
     if (code > 0) snprintf(what, sizeof(what), "HTTP %d", code);
     else snprintf(what, sizeof(what), "réseau (%d)", code);
-    setError(err, errLen, src.name, what);
+    setError(err, errLen, slot.name, what);
     http.end();
     return false;
   }
 
-  void* mem = heap_caps_malloc(sizeof(IcsParser), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!mem) {
-    setError(err, errLen, src.name, "mémoire");
+  IcsParser* parser = newParser(ws, we);
+  if (!parser) {
+    setError(err, errLen, slot.name, "mémoire");
     http.end();
     return false;
   }
-  IcsParser* parser = new (mem) IcsParser(g_tz, ws, we);
-
   WiFiClient* stream = http.getStreamPtr();
   int remaining = http.getSize();
   char buf[1024];
@@ -92,40 +250,35 @@ bool fetchCalendar(int slot, int64_t ws, int64_t we, char* err, size_t errLen) {
   parser->finish();
 
   bool ok = parser->sawCalendar() && remaining <= 0;
-  if (!parser->sawCalendar()) setError(err, errLen, src.name, "pas un fichier iCal");
-  else if (!ok) setError(err, errLen, src.name, "téléchargement incomplet");
+  if (!parser->sawCalendar()) setError(err, errLen, slot.name, "pas un fichier iCal");
+  else if (!ok) setError(err, errLen, slot.name, "téléchargement incomplet");
   if (ok) {
-    CalendarCache& cache = g_cache[slot];
-    cache.count = 0;
-    for (int i = 0; i < parser->count() && cache.count < kMaxEvents; ++i) {
-      const IcsOccurrence& o = parser->at(i);
-      CalendarEvent& e = cache.events[cache.count++];
-      e.start = o.start;
-      e.end = o.end;
-      e.allDay = o.allDay;
-      e.calendar = static_cast<uint8_t>(slot);
-      e.uid = o.uid;
-      memcpy(e.title, o.title, sizeof(e.title));
-      memcpy(e.location, o.location, sizeof(e.location));
-      memcpy(e.url, o.url, sizeof(e.url));
-    }
-    log_i("Calendar %s: %d events (%d VEVENTs)", src.name, cache.count, parser->eventsSeen());
+    storeResults(slot, *parser);
+    log_i("Calendar %s: %d events (%d VEVENTs)", slot.name, slot.count, parser->eventsSeen());
   }
-  parser->~IcsParser();
-  free(mem);
+  deleteParser(parser);
   return ok;
 }
 
 void refreshCalendars() {
+  if (cfg::calDavConfigured() && (!g_discovered || static_cast<int32_t>(millis() - g_nextDiscovery) >= 0)) {
+    const bool ok = discoverCalDav();
+    g_discovered |= ok;
+    g_nextDiscovery = millis() + (ok ? 6u * 3600u * 1000u : 120000u);
+  }
+
   const int64_t now = time(nullptr);
   const int64_t today = g_tz.localDay(now);
   const int64_t ws = g_tz.dayStartUtc(today);
   const int64_t we = g_tz.dayStartUtc(today + 8);
-  char err[48] = {0};
-  for (int s = 0; s < g_numActive; ++s) {
-    char e[48] = {0};
-    g_cache[s].ok = fetchCalendar(s, ws, we, e, sizeof(e));
-    if (!g_cache[s].ok && !err[0]) memcpy(err, e, sizeof(err));
+  char err[64];
+  memcpy(err, g_discoveryError, sizeof(err));
+  for (int s = 0; s < g_numSlots; ++s) {
+    Slot& slot = g_slots[s];
+    if (!slot.events) continue;
+    char e[64] = {0};
+    slot.ok = slot.caldav ? fetchCalDav(slot, ws, we, e, sizeof(e)) : fetchIcs(slot, ws, we, e, sizeof(e));
+    if (!slot.ok && !err[0]) memcpy(err, e, sizeof(err));
   }
 
   // Merge (keeping the last good copy of calendars that failed).
@@ -136,11 +289,11 @@ void refreshCalendars() {
     if (!merged) return;
   }
   int n = 0;
-  for (int s = 0; s < g_numActive; ++s) {
-    for (int i = 0; i < g_cache[s].count; ++i) {
-      const CalendarEvent& e = g_cache[s].events[i];
-      if (e.end < now - 86400 * 2 && e.end != e.start) continue;
-      merged[n++] = e;
+  for (int s = 0; s < g_numSlots; ++s) {
+    for (int i = 0; i < g_slots[s].count; ++i) {
+      merged[n] = g_slots[s].events[i];
+      merged[n].calendar = static_cast<uint8_t>(s);
+      ++n;
     }
   }
   std::sort(merged, merged + n, [](const CalendarEvent& a, const CalendarEvent& b) {
@@ -153,14 +306,23 @@ void refreshCalendars() {
   CalendarState& cal = g_store.data().cal;
   cal.count = n;
   memcpy(cal.events, merged, sizeof(CalendarEvent) * n);
-  for (int s = 0; s < g_numActive; ++s) {
-    cal.calendars[s].ok = g_cache[s].ok;
-    cal.calendars[s].lastCount = static_cast<int16_t>(g_cache[s].count);
+  cal.numCalendars = g_numSlots;
+  for (int s = 0; s < g_numSlots; ++s) {
+    cal.calendars[s].ok = g_slots[s].ok;
+    cal.calendars[s].lastCount = static_cast<int16_t>(g_slots[s].count);
   }
   memcpy(cal.error, err, sizeof(cal.error));
   cal.updatedAt = now;
   ++cal.serial;
   g_store.touch();
+}
+
+bool calendarsDone() {
+  if (g_discoveryError[0]) return false;
+  for (int s = 0; s < g_numSlots; ++s) {
+    if (!g_slots[s].ok) return false;
+  }
+  return true;
 }
 
 bool refreshWeather() {
@@ -216,6 +378,7 @@ bool refreshWeather() {
 void taskMain(void*) {
   uint32_t nextWeather = 0, nextCalendar = 0;
   int64_t lastDay = -1;
+  const bool calendars = cfg::calendarsConfigured();
   for (;;) {
     if (WiFi.status() != WL_CONNECTED || time(nullptr) < 1700000000) {
       delay(1000);
@@ -231,11 +394,9 @@ void taskMain(void*) {
       const bool ok = refreshWeather();
       nextWeather = millis() + (ok ? cfg::kWeatherRefreshMin * 60000u : 60000u);
     }
-    if (g_numActive > 0 && (force || newDay || static_cast<int32_t>(millis() - nextCalendar) >= 0)) {
+    if (calendars && (force || newDay || static_cast<int32_t>(millis() - nextCalendar) >= 0)) {
       refreshCalendars();
-      bool allOk = true;
-      for (int s = 0; s < g_numActive; ++s) allOk &= g_cache[s].ok;
-      nextCalendar = millis() + (allOk ? cfg::kCalendarRefreshMin * 60000u : 120000u);
+      nextCalendar = millis() + (calendarsDone() ? cfg::kCalendarRefreshMin * 60000u : 120000u);
     }
     delay(250);
   }
@@ -245,24 +406,23 @@ void taskMain(void*) {
 
 void startTask() {
   g_tz.parse(cfg::kTimezone);
+  for (int i = 0; i < cfg::kNumCalendars && g_numSlots < kMaxCalendars; ++i) {
+    const cfg::CalendarSource& src = cfg::kCalendars[i];
+    if (!src.url || !src.url[0]) continue;
+    Slot& slot = g_slots[g_numSlots++];
+    slot.icsIndex = i;
+    strlcpy(slot.name, src.name, sizeof(slot.name));
+    slot.color = src.color;
+    slot.events = allocEvents();
+  }
+  g_numIcs = g_numSlots;
+  publishCalendars();
   {
     Store::Guard g(g_store);
-    CalendarState& cal = g_store.data().cal;
-    for (int i = 0; i < cfg::kNumCalendars && g_numActive < kMaxCalendars; ++i) {
-      const cfg::CalendarSource& src = cfg::kCalendars[i];
-      if (!src.url || !src.url[0]) continue;
-      const int s = g_numActive++;
-      g_active[s] = i;
-      g_cache[s].events = static_cast<CalendarEvent*>(
-          heap_caps_malloc(sizeof(CalendarEvent) * kMaxEvents, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-      strlcpy(cal.calendars[s].name, src.name, sizeof(cal.calendars[s].name));
-      cal.calendars[s].color = src.color;
-    }
-    cal.numCalendars = g_numActive;
     strlcpy(g_store.data().weather.place, cfg::kPlaceName, sizeof(g_store.data().weather.place));
   }
-  if (g_numActive == 0 && !cfg::kWeatherEnabled) return;
-  xTaskCreatePinnedToCore(taskMain, "sync", 16384, nullptr, 1, nullptr, 0);
+  if (!cfg::calendarsConfigured() && !cfg::kWeatherEnabled) return;
+  xTaskCreatePinnedToCore(taskMain, "feeds", 16384, nullptr, 1, nullptr, 0);
 }
 
 }  // namespace feeds

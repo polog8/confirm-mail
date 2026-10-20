@@ -7,3 +7,5 @@ test/host/test_core
 test/host/ics_dump
 __pycache__/
 *.pyc
+test/host/test_caldav
+test/host/caldav_live

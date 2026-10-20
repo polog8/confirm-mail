@@ -16,9 +16,11 @@ jobs:
         run: make -C test/host
       - name: Differential test against recurring-ical-events
         run: |
-          pip install recurring-ical-events
-          make -C test/host ics_dump
+          pip install recurring-ical-events radicale
+          make -C test/host ics_dump caldav_live
           python3 test/host/diff_test.py 300
+      - name: CalDAV end-to-end test (local Radicale server)
+        run: python3 test/host/caldav_e2e.py
 
   build:
     runs-on: ubuntu-latest

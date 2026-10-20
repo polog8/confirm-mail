@@ -67,7 +67,7 @@ void handleRoot() {
   // Copy only what the page needs: AppSnapshot is far too big for this stack.
   SpotifyStatus status;
   bool hasItem;
-  char title[96], artist[96], ssid[33], calError[48];
+  char title[96], artist[96], ssid[33], calError[64];
   int8_t rssi;
   int calCount;
   {

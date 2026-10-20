@@ -98,7 +98,7 @@ void HomeApp::renderEventCard(draw::Canvas& c, const Frame& f, int x, int y, int
   if (!settings_.calendarEnabled) {
     icons::draw(c, Icon::Today, x + 22, y + h / 2, 16, theme::kText3);
     draw::text(c, Font::BodyBold, "Agenda non configuré", x + 40, y + 22, theme::kText2);
-    draw::text(c, Font::Small, "Ajoutez un lien iCal dans config.h", x + 40, y + 40, theme::kText3);
+    draw::text(c, Font::Small, "iCloud ou lien iCal : voir config.h", x + 40, y + 40, theme::kText3);
     return;
   }
   const int cur = evt::current(cal, f.now);

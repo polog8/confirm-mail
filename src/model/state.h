@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 constexpr int kMaxEvents = 96;
-constexpr int kMaxCalendars = 4;
+constexpr int kMaxCalendars = 8;
 
 enum class SpotifyStatus : uint8_t {
   Disabled,         // not configured
@@ -74,7 +74,7 @@ struct CalendarState {
   CalendarInfo calendars[kMaxCalendars];
   uint32_t serial = 0;
   int64_t updatedAt = 0;  // UTC, 0 = never
-  char error[48] = {0};
+  char error[64] = {0};
 };
 
 struct WeatherState {

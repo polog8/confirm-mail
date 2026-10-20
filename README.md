@@ -14,7 +14,7 @@ réunion et lancer un minuteur de concentration.
 |---|---|---|
 | **Accueil** | Heure, date, météo du jour, prochain rendez-vous (« dans 13 min », visio), morceau en cours, alerte pluie | ⏮ · ⏯ · ⏭ |
 | **Musique** | Pochette, titre/artiste/album, appareil Spotify, barre de progression. Le fond prend la couleur dominante de la pochette | ⏮ · ⏯ · ⏭ |
-| **Agenda** | Journée par journée sur 7 jours : événements sur la journée, horaires, lieux, visio, ligne « maintenant » | jour − · aujourd'hui / synchro · jour + |
+| **Agenda** | Journée par journée sur 7 jours, avec les calendriers iCloud lus directement et leurs couleurs : événements sur la journée, horaires, lieux, visio, ligne « maintenant » | jour − · aujourd'hui / synchro · jour + |
 | **Focus** | Pomodoro 25/5 avec grande pause après 4 sessions, sessions et minutes du jour | reset · ▶/❚❚ · passer |
 | **Système** | Wi-Fi, adresse de la page web, batterie, état Spotify/agenda/météo, mémoire | luminosité − · synchro · luminosité + |
 | **Rappel** | 5 min avant une réunion : écran plein, vibration, son, LED, QR code du lien visio | plus tard · OK |
@@ -87,28 +87,48 @@ est limitée à 5 utilisateurs. Pour un usage personnel, aucun de ces points ne 
 
 ### 4. Calendrier Apple (et autres)
 
-La station lit des flux **iCal** (`.ics` / `webcal://`).
+**Méthode recommandée : iCloud en direct (CalDAV).** La station lit vos calendriers iCloud avec un
+*mot de passe pour app*, sans rien rendre public. Elle reprend aussi les noms et les couleurs de
+l'app Calendrier.
 
-- **Calendrier Apple / iCloud.** Sur Mac, dans l'app Calendrier, faites un clic droit sur un
-  calendrier iCloud, choisissez *Partager le calendrier…*, cochez **Calendrier public** et copiez
-  le lien `webcal://…`. Sur iPhone : Calendrier › Calendriers › ⓘ › *Calendrier public* ›
-  *Partager le lien*.
-- **Google Agenda.** Paramètres › votre agenda › *Adresse secrète au format iCal*.
-- **Outlook / Microsoft 365.** Paramètres › Calendrier › Calendriers partagés › *Publier un
+1. Ouvrez <https://account.apple.com>, puis *Connexion et sécurité* › **Mots de passe pour app**
+   (l'identification à deux facteurs doit être activée). Créez un mot de passe nommé « Desk Station ».
+2. Dans `include/config.h` :
+
+   ```cpp
+   constexpr const char* kCalDavUser = "prenom.nom@icloud.com";  // e-mail du compte Apple
+   constexpr const char* kCalDavPassword = "abcd-efgh-ijkl-mnop";
+   constexpr const char* kCalDavCalendars = "";  // ex. "Maison, Travail" ; vide = tous
+   ```
+
+Au démarrage, la station découvre vos calendriers d'événements. Elle ignore les listes Rappels
+et les boîtes de réception. Toutes les 10 minutes, elle demande ensuite à iCloud les événements des
+8 prochains jours. Les répétitions, exceptions et occurrences déplacées sont calculées sur la station.
+La liste des calendriers est rafraîchie toutes les 6 heures.
+
+> Le mot de passe pour app est stocké en clair dans le firmware. Il donne accès aux protocoles
+> iCloud (calendrier, contacts, mail), mais pas à la gestion du compte. Vous pouvez le révoquer à
+> tout moment depuis la même page.
+
+La même configuration fonctionne avec d'autres serveurs CalDAV ; changez seulement `kCalDavUrl` :
+Fastmail (`https://caldav.fastmail.com/`), Nextcloud (`https://votre-cloud/remote.php/dav/`)…
+
+**Autres calendriers : liens iCal** (`.ics` / `webcal://`), qu'on peut combiner avec iCloud :
+
+- **Google Agenda** : Paramètres › votre agenda › *Adresse secrète au format iCal*.
+- **Outlook / Microsoft 365** : Paramètres › Calendrier › Calendriers partagés › *Publier un
   calendrier* › lien ICS.
-
-Collez chaque lien dans `kCalendars`, avec un nom et une couleur (4 calendriers au maximum) :
+- **Calendrier iCloud public** (si vous ne voulez pas de mot de passe pour app) : dans l'app
+  Calendrier sur Mac, clic droit sur le calendrier › *Partager le calendrier…* › **Calendrier
+  public**. Le lien est lisible par quiconque le possède.
 
 ```cpp
 constexpr CalendarSource kCalendars[] = {
-    {"Perso", "webcal://p42-caldav.icloud.com/published/2/XXXX…", 0x5B8DEF},
-    {"Travail", "https://calendar.google.com/calendar/ical/…/basic.ics", 0xF59E0B},
+    {"Google", "https://calendar.google.com/calendar/ical/…/basic.ics", 0xF59E0B},
 };
 ```
 
-> **Confidentialité.** Un calendrier iCloud public est lisible par toute personne qui possède
-> le lien. Le lien est long et impossible à deviner, mais ne le partagez pas. iCloud met à jour le
-> flux publié avec quelques minutes de retard.
+8 calendriers au total (iCloud + liens iCal).
 
 ### 5. Flasher
 
@@ -132,14 +152,16 @@ DESK_OTA_PASSWORD=motdepasse pio run -e core2-ota -t upload
  │ Shell : navigation, rappels,      │◄──────│ spotify jeton, état de lecture, file │
  │   retour auto, luminosité         │ Store │         de commandes, pochettes      │
  │ rendu dans un sprite PSRAM →      │──────►│ feeds   iCal (parseur en streaming), │
- │   écran (transitions glissées)    │ cmds  │         météo Open-Meteo             │
+ │   écran (transitions glissées)    │ cmds  │         + CalDAV iCloud, météo       │
  └──────────────────────────────────┘       └──────────────────────────────────────┘
 ```
 
 - `src/core/`: code portable sans Arduino, testé sur PC. On y trouve l'arithmétique des dates, les
   fuseaux POSIX et le **parseur iCal**, qui gère le streaming, les règles RRULE (DAILY, WEEKLY,
   MONTHLY et YEARLY avec INTERVAL, COUNT, UNTIL, BYDAY, BYMONTHDAY, BYMONTH, BYSETPOS et WKST),
-  les EXDATE, les occurrences modifiées (RECURRENCE-ID) et les fuseaux TZID.
+  les EXDATE, les occurrences modifiées (RECURRENCE-ID) et les fuseaux TZID. On y trouve aussi le
+  **client CalDAV** : découverte du compte, requêtes `calendar-query` limitées à la fenêtre
+  affichée, et extraction en streaming du contenu `calendar-data` (CDATA ou texte échappé).
 - `src/ui/`: l'interface. Elle dessine dans un sprite M5GFX : polices **Inter** anti-aliasées
   (accents compris), icônes vectorielles (SDF), dégradés tramés et un écran par fichier dans
   `apps/`.
@@ -151,9 +173,11 @@ DESK_OTA_PASSWORD=motdepasse pio run -e core2-ota -t upload
 ## Tests et aperçus
 
 ```bash
-make -C test/host                                         # tests unitaires (dates, fuseaux, iCal)
+make -C test/host                                         # tests unitaires (dates, fuseaux, iCal, CalDAV)
 pip install recurring-ical-events && make -C test/host ics_dump
 python3 test/host/diff_test.py 300                        # comparaison avec une implémentation de référence
+pip install radicale && make -C test/host caldav_live
+python3 test/host/caldav_e2e.py                           # CalDAV de bout en bout contre un serveur Radicale local
 
 # Captures d'écran sur PC (g++ + libsdl2-dev ; M5GFX est récupéré par PlatformIO)
 pio pkg install -e core2
@@ -168,15 +192,15 @@ Pour régénérer les polices : `tools/gen_fonts.sh` (nécessite Pillow et fontT
 
 - **Spotify.** Pas de navigation dans la bibliothèque, seulement le contrôle de la lecture en cours.
   Les changements faits ailleurs apparaissent en 1 à 8 s selon l'écran affiché.
-- **iCal.** Les règles infra-journalières (HOURLY…) ne sont pas développées. Les fuseaux TZID
-  inconnus de la table intégrée (`src/core/tz.cpp`) sont interprétés dans le fuseau local.
+- **Calendriers.** Les règles infra-journalières (HOURLY…) ne sont pas développées. Les fuseaux
+  TZID inconnus de la table intégrée (`src/core/tz.cpp`) sont interprétés dans le fuseau local.
+  Les calendriers sont en lecture seule.
 - **Wi-Fi.** 2,4 GHz uniquement (limite de l'ESP32).
 - **Titres non latins.** Les titres en japonais, en coréen, etc. ne s'affichent pas : la police
   embarquée couvre le latin étendu.
 
 ## Pistes d'évolution
 
-- Lecture CalDAV iCloud avec un mot de passe d'application, pour éviter de publier le calendrier.
 - Statut « ne pas déranger » (Slack/macOS) pendant les sessions Focus.
 - Écran domotique (Home Assistant).
 
